@@ -1,0 +1,636 @@
+blueprint:
+  name: Knuts PV Warmwater Heater – Pufferspeicher Heizstab Steuerung v5
+  description: >
+    Zwei-Modus Steuerung: Unter der Zieltemperatur läuft der Heizstab im PV-Überschuss-Modus
+    (pv_surplus Regelgröße, Batterie hat Vorrang). Über der Zieltemperatur wechselt der
+    Heizstab in den Export-Modus (nur echter Netzüberschuss, letzte Priorität nach Batterie).
+    Boost-Modus verhindert das Anspringen der Pelletsheizung bei kaltem Puffer.
+    Optional: Zirkulationspumpe läuft mit Heizstab und hat konfigurierbaren Nachlauf.
+  domain: automation
+  input:
+    battery_level:
+      name: Batterie-Ladestand
+      description: Sensor für den aktuellen Batterieladestand in %. Typische Entitätsnamen: "battery level" (SunGrow), "state_of_charge" (Fronius), "soc" (SMA).
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery
+    export_power:
+      name: Export Leistung
+      description: Sensor für die ins Netz eingespeiste Leistung in Watt (positiv = Export). Typische Entitätsnamen: "Export power" (SunGrow), "grid_feed_in_power" (Fronius), "power_to_grid" (SMA).
+      selector:
+        entity:
+          domain: sensor
+          device_class: power
+    import_power:
+      name: Import Leistung
+      description: Sensor für die aus dem Netz bezogene Leistung in Watt (positiv = Import). Typische Entitätsnamen: "import power" (SunGrow), "grid_consumption_power" (Fronius), "power_from_grid" (SMA).
+      selector:
+        entity:
+          domain: sensor
+          device_class: power
+    load_power:
+      name: Gesamtverbrauch
+      description: Sensor für den aktuellen Hausverbrauch in Watt. Typische Entitätsnamen: "load power" (SunGrow), "consumption_power" (Fronius), "house_consumption" (SMA).
+      selector:
+        entity:
+          domain: sensor
+          device_class: power
+    total_dc_power:
+      name: PV-Ertrag
+      description: Sensor für die gesamte PV-Erzeugung in Watt (DC oder AC). Typische Entitätsnamen: "total dc power" (SunGrow), "pv_power" (Fronius), "pv_generation" (SMA).
+      selector:
+        entity:
+          domain: sensor
+          device_class: power
+
+    # ── Heizstab 1 (immer aktiv) ──────────────────────────────────────────────
+    heater_1_switch:
+      name: Heizstab 1 – Schalter
+      description: Schalter für Heizstab 1 (Pflichtfeld). Typisch ein Smart Plug oder eine Unterputz-Schaltsteckdose.
+      selector:
+        entity:
+          domain: switch
+    heater_1_watts:
+      name: Heizstab 1 – Leistung (W)
+      description: Nennleistung von Heizstab 1 in Watt
+      default: 2000
+      selector:
+        number:
+          min: 100
+          max: 10000
+          step: 100
+          unit_of_measurement: "W"
+
+    # ── Heizstab 2 (optional) ─────────────────────────────────────────────────
+    use_heater_2:
+      name: Zweiten Heizstab verwenden?
+      description: Aktiviere diese Option wenn du einen zweiten Heizstab steuern möchtest
+      default: false
+      selector:
+        boolean:
+    heater_2_switch:
+      name: Heizstab 2 – Schalter
+      description: >
+        Schalter für Heizstab 2. Typisch ein Smart Plug oder eine Unterputz-Schaltsteckdose.
+        Wird ignoriert wenn "Zweiten Heizstab verwenden" deaktiviert ist.
+      default: []
+      selector:
+        entity:
+          domain: switch
+    heater_2_watts:
+      name: Heizstab 2 – Leistung (W)
+      description: Nennleistung von Heizstab 2 in Watt (nur relevant wenn Heizstab 2 aktiv)
+      default: 3000
+      selector:
+        number:
+          min: 100
+          max: 10000
+          step: 100
+          unit_of_measurement: "W"
+
+    # ── Allgemeine Einstellungen ───────────────────────────────────────────────
+    use_circulation_pump:
+      name: Zirkulationspumpe verwenden?
+      description: Aktiviere diese Option um die Zirkulationspumpe zu steuern
+      default: false
+      selector:
+        boolean:
+    circulation_pump_switch:
+      name: Zirkulationspumpe – Schalter
+      description: >
+        Smart Plug / Schalter der Zirkulationspumpe. Wird eingeschaltet sobald
+        ein Heizstab läuft, und läuft nach dem Abschalten noch die konfigurierte
+        Nachlaufzeit weiter. Wird ignoriert wenn "Zirkulationspumpe verwenden" deaktiviert ist.
+      default: []
+      selector:
+        entity:
+          domain: switch
+    pump_runon_minutes:
+      name: Zirkulationspumpe – Nachlaufzeit (Minuten)
+      description: >
+        Wie lange die Zirkulationspumpe nach dem Abschalten beider Heizstäbe
+        noch weiterläuft um die Wärme im Puffer zu verteilen.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: "min"
+    pump_runon_helper:
+      name: Zirkulationspumpe – Nachlauf-Hilfsschalter (input_boolean)
+      description: >
+        Ein input_boolean Helper als Nachlauf-Flag für die Zirkulationspumpe.
+        Anlegen unter: Einstellungen → Geräte & Dienste → Helfer → Schalter erstellen.
+        Empfohlener Name: input_boolean.pv_heizer_pumpe_nachlauf
+        Nur erforderlich wenn "Zirkulationspumpe verwenden" aktiviert ist.
+      default: []
+      selector:
+        entity:
+          domain: input_boolean
+    shutdown_pending_helper:
+      name: Abschalt-Hilfsschalter (input_boolean)
+      description: >
+        Ein input_boolean Helper als Verzögerungs-Flag.
+        Anlegen unter: Einstellungen → Geräte & Dienste → Helfer → Schalter erstellen.
+        Empfohlener Name: input_boolean.pv_heizer_abschaltung_ausstehend
+      selector:
+        entity:
+          domain: input_boolean
+    min_battery_level:
+      name: Minimaler Batterieladestand (%)
+      description: Unter diesem Wert werden alle Heizstäbe sofort abgeschaltet
+      default: 90
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+    delay_minutes:
+      name: Abschaltverzögerung (Minuten)
+      description: >
+        Wie lange muss Energiemangel anhalten bevor abgeschaltet wird.
+        Verhindert Abschalten bei kurzen Schwankungen.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          unit_of_measurement: "min"
+    hysteresis_watts:
+      name: Hysterese (W)
+      description: >
+        Puffer unterhalb der Einschaltschwelle für Abschaltung.
+        Beispiel: 300W → Heizstab 1 (2000W) schaltet ein ab 2000W,
+        aus erst unter 1700W. Verhindert ständiges Ein-/Ausschalten.
+      default: 300
+      selector:
+        number:
+          min: 0
+          max: 2000
+          step: 50
+          unit_of_measurement: "W"
+    temp_cutoff_sensor:
+      name: Temperatur-Sensor (Abschaltgrenze)
+      description: >
+        Temperatursensor für die Abschaltgrenze. Typisch am Pufferspeicher oben oder in der Mitte montiert.
+        Sobald dieser Sensor den konfigurierten Maximalwert erreicht, werden alle Heizstäbe sofort abgeschaltet.
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    temp_cutoff_value:
+      name: Abschalt-Temperatur (°C)
+      description: Bei Erreichen dieser Temperatur werden alle Heizstäbe abgeschaltet
+      default: 65
+      selector:
+        number:
+          min: 10
+          max: 95
+          step: 1
+          unit_of_measurement: "°C"
+    temp_boost_threshold:
+      name: Boost-Temperatur (°C)
+      description: >
+        Unterschreitet der Pufferspeicher diese Temperatur, wird die Batteriegrenze
+        ignoriert (Boost-Modus). Verhindert das Anspringen der Pelletsheizung.
+        Der Boost bleibt aktiv bis +2°C über diesen Wert (Hysterese).
+        Die Abschalt-Temperatur gilt weiterhin immer.
+        Typisch derselbe oder ein ähnlicher Sensor wie die Abschaltgrenze.
+      default: 33
+      selector:
+        number:
+          min: 10
+          max: 60
+          step: 1
+          unit_of_measurement: "°C"
+    temp_target_sensor:
+      name: Zieltemperatur-Sensor
+      description: >
+        Sensor für die Zieltemperatur. Unter diesem Wert gilt PV-Überschuss-Modus
+        (Heizstab läuft sobald PV-Strom verfügbar). Über diesem Wert wechselt der
+        Heizstab in den Export-Modus (nur echter Netzüberschuss nach Batterie).
+        Kann ein anderer Sensor als brauchwasser_unten_temperatur sein.
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    temp_target_value:
+      name: Zieltemperatur (°C)
+      description: >
+        Unter dieser Temperatur: PV-Überschuss-Modus (Priorität: Mindesttemperatur erreichen).
+        Über dieser Temperatur: Export-Modus (Heizstab ist letzte Instanz, nur echter Netzüberschuss).
+        Empfehlung: Temperatur die bis zum nächsten Tag ausreicht (z.B. 50°C).
+      default: 50
+      selector:
+        number:
+          min: 20
+          max: 80
+          step: 1
+          unit_of_measurement: "°C"
+
+variables:
+  # Entitäten
+  battery_level_entity: !input battery_level
+  export_power_entity:  !input export_power
+  import_power_entity:  !input import_power
+  load_power_entity:    !input load_power
+  total_dc_power_entity: !input total_dc_power
+  heater_1: !input heater_1_switch
+  heater_2: !input heater_2_switch
+  use_pump:        !input use_circulation_pump
+  pump_switch:     !input circulation_pump_switch
+  pump_runon:      !input pump_runon_minutes
+  pump_helper:     !input pump_runon_helper
+  shutdown_pending: !input shutdown_pending_helper
+
+  # Konfiguration
+  h1_watts: !input heater_1_watts
+  h2_watts: !input heater_2_watts
+  use_h2: !input use_heater_2
+  min_battery: !input min_battery_level
+  delay_time: !input delay_minutes
+  hysteresis: !input hysteresis_watts
+  temp_sensor: !input temp_cutoff_sensor
+  temp_max:        !input temp_cutoff_value
+  temp_boost_min:  !input temp_boost_threshold
+  temp_target_entity: !input temp_target_sensor
+  temp_target:     !input temp_target_value
+
+  # Aktuelle Messwerte
+  pv_now:       "{{ states(total_dc_power_entity) | float(0) }}"
+  load_now:     "{{ states(load_power_entity) | float(0) }}"
+  battery_now:  "{{ states(battery_level_entity) | float(0) }}"
+  export_now:   "{{ states(export_power_entity) | float(0) }}"
+  import_now:   "{{ states(import_power_entity) | float(0) }}"
+  temp_now:     "{{ states(temp_sensor) | float(0) }}"
+  temp_target_now: "{{ states(temp_target_entity) | float(0) }}"
+
+  # Heizstab-Status
+  h1_on: "{{ is_state(heater_1, 'on') }}"
+  # Heizstab 2 gilt nur als "an" wenn use_h2 aktiv UND Schalter on
+  h2_on: "{{ use_h2 and is_state(heater_2, 'on') }}"
+
+  # Verfügbarer PV-Überschuss (für PV-Überschuss-Modus)
+  # Laufende Heizstäbe werden herausgerechnet (Zirkelschluss vermeiden)
+  pv_surplus: >
+    {{ pv_now - load_now
+       + (h1_watts if h1_on else 0)
+       + (h2_watts if h2_on else 0) }}
+
+  # Verfügbarer Export (für Export-Modus)
+  # export_now = echter Messwert vom Smartmeter nach allen Verbrauchern inkl. Batterie
+  # Laufende Heizstäbe werden herausgerechnet um Zirkelschluss zu vermeiden
+  export_net: >
+    {{ export_now
+       + (h1_watts if h1_on else 0)
+       + (h2_watts if (use_h2 and h2_on) else 0) }}
+
+  # ── Betriebsmodus ──────────────────────────────────────────────────────────
+  # PV-Modus:     temp_target_now < temp_target → Mindesttemperatur erreichen
+  #               Regelgröße: pv_surplus (Batterie hat Vorrang beim Laden)
+  # Export-Modus: temp_target_now >= temp_target → Puffer bereits warm genug
+  #               Regelgröße: export_net (Heizstab ist letzte Instanz)
+  pv_mode: "{{ temp_target_now < temp_target }}"
+
+
+  # Einschaltschwellen
+  # Boost-Modus: Batteriegrenze ignorieren wenn Puffer zu kalt
+  # Hysterese: Boost aktiv unter temp_boost_min, endet erst bei temp_boost_min + 2°C
+  boost_active: >
+    {{ temp_now < temp_boost_min
+       or (any_heater_on and temp_now < (temp_boost_min + 2)) }}
+  battery_ok: "{{ battery_now >= min_battery or boost_active }}"
+  temp_ok: "{{ temp_now < temp_max }}"
+  # Einschaltschwellen je nach Modus
+  # PV-Modus:     pv_surplus >= Nennleistung
+  # Export-Modus: export_net >= Nennleistung (nur echter Netzüberschuss)
+  surplus_for_h1: >
+    {{ (pv_surplus >= h1_watts) if pv_mode else (export_net >= h1_watts) }}
+  surplus_for_h2: >
+    {{ (pv_surplus >= h2_watts) if pv_mode else (export_net >= h2_watts) }}
+  surplus_for_both: >
+    {{ (pv_surplus >= (h1_watts + h2_watts)) if pv_mode
+       else (export_net >= (h1_watts + h2_watts)) }}
+
+  # Abschaltschwellen je nach Modus:
+  # PV-Modus:     pv_surplus unter (Nennleistung - Hysterese)
+  # Export-Modus: export_net unter (Nennleistung - Hysterese) ODER Import
+  importing: "{{ import_now > 200 }}"
+  should_off_h1: >
+    {{ (pv_surplus < (h1_watts - hysteresis))
+       if pv_mode else
+       (export_net < (h1_watts - hysteresis) or importing) }}
+  should_off_h2: >
+    {{ (pv_surplus < (h2_watts - hysteresis))
+       if pv_mode else
+       (export_net < (h2_watts - hysteresis) or importing) }}
+  should_off_both: >
+    {{ (pv_surplus < (h1_watts + h2_watts - hysteresis))
+       if pv_mode else
+       (export_net < (h1_watts + h2_watts - hysteresis) or importing) }}
+
+  # Irgendein Heizstab läuft?
+  any_heater_on: "{{ h1_on or h2_on }}"
+
+  # Abschaltung notwendig?
+  shutdown_needed: >
+    {{ not battery_ok
+       or not temp_ok
+       or importing
+       or (h1_on and not h2_on and should_off_h1)
+       or (h2_on and not h1_on and should_off_h2)
+       or (h1_on and h2_on and should_off_both) }}
+
+trigger:
+  - platform: time_pattern
+    minutes: "*"
+
+action:
+  - choose:
+
+      # ══ PRIORITÄT 0: Batterie zu niedrig ODER Temperatur erreicht → sofort alle aus ════════════════════
+      - conditions:
+          - condition: template
+            value_template: "{{ (not battery_ok or not temp_ok) and any_heater_on }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: "{{ heater_1 }}"
+          - if:
+              - condition: template
+                value_template: "{{ use_h2 }}"
+            then:
+              - service: switch.turn_off
+                target:
+                  entity_id: "{{ heater_2 }}"
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ shutdown_pending }}"
+          - service: logbook.log
+            data:
+              name: PV-Heizsteuerung
+              message: >
+                ALLE AUS -
+                {% if not temp_ok %}
+                Temperatur erreicht: {{ temp_now | round(1) }}°C (Maximum: {{ temp_max }}°C)
+                {% else %}
+                Batterie zu niedrig: {{ battery_now | round(1) }}% (Minimum: {{ min_battery }}%)
+                {% endif %}
+          # Pumpen-Nachlauf bei Sofortabschaltung starten
+          - if:
+              - condition: template
+                value_template: "{{ use_pump and is_state(pump_switch, 'on') }}"
+            then:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: "{{ pump_helper }}"
+
+      # ══ PRIORITÄT 1: Genug Überschuss für beide → beide ein ══════════════════
+      # (nur wenn Heizstab 2 konfiguriert ist)
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ battery_ok and use_h2 and surplus_for_both and temp_ok
+                 and (not h1_on or not h2_on) }}
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ shutdown_pending }}"
+          - service: switch.turn_on
+            target:
+              entity_id: "{{ heater_1 }}"
+          - service: switch.turn_on
+            target:
+              entity_id: "{{ heater_2 }}"
+          - service: logbook.log
+            data:
+              name: PV-Heizsteuerung
+              message: >
+                BEIDE EIN{% if boost_active %} [BOOST]{% endif %} [{{ "PV-Modus" if pv_mode else "Export-Modus" }}] -
+                {% if pv_mode %}Überschuss: {{ pv_surplus | round(0) }}W{% else %}Export: {{ export_now | round(0) }}W (netto: {{ export_net | round(0) }}W){% endif %},
+                H1: {{ h1_watts }}W + H2: {{ h2_watts }}W,
+                Batterie: {{ battery_now | round(1) }}%, Puffer: {{ temp_now | round(1) }}°C, Ziel: {{ temp_target_now | round(1) }}°C/{{ temp_target }}°C
+
+      # ══ PRIORITÄT 2: Überschuss nur für H2 (größer) → nur H2 ein ════════════
+      # Logik: Wenn H2 größer als H1 und genug für H2 aber nicht beide
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ battery_ok and use_h2 and temp_ok
+                 and surplus_for_h2 and not surplus_for_both
+                 and h2_watts >= h1_watts
+                 and (h1_on or not h2_on) }}
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ shutdown_pending }}"
+          - service: switch.turn_off
+            target:
+              entity_id: "{{ heater_1 }}"
+          - service: switch.turn_on
+            target:
+              entity_id: "{{ heater_2 }}"
+          - service: logbook.log
+            data:
+              name: PV-Heizsteuerung
+              message: >
+                H2 EIN ({{ h2_watts }}W){% if boost_active %} [BOOST]{% endif %} [{{ "PV-Modus" if pv_mode else "Export-Modus" }}], H1 AUS -
+                {% if pv_mode %}Überschuss: {{ pv_surplus | round(0) }}W{% else %}Export: {{ export_now | round(0) }}W (netto: {{ export_net | round(0) }}W){% endif %},
+                Batterie: {{ battery_now | round(1) }}%, Puffer: {{ temp_now | round(1) }}°C, Ziel: {{ temp_target_now | round(1) }}°C/{{ temp_target }}°C
+
+      # ══ PRIORITÄT 3: Überschuss für H1 (kleiner/gleich) → nur H1 ein ═════════
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ battery_ok and temp_ok and surplus_for_h1
+                 and (not use_h2 or (not surplus_for_both and h1_watts <= h2_watts) or (not surplus_for_h2))
+                 and (not h1_on or h2_on) }}
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ shutdown_pending }}"
+          - service: switch.turn_on
+            target:
+              entity_id: "{{ heater_1 }}"
+          - if:
+              - condition: template
+                value_template: "{{ use_h2 and h2_on }}"
+            then:
+              - service: switch.turn_off
+                target:
+                  entity_id: "{{ heater_2 }}"
+          - service: logbook.log
+            data:
+              name: PV-Heizsteuerung
+              message: >
+                H1 EIN ({{ h1_watts }}W){% if boost_active %} [BOOST]{% endif %} [{{ "PV-Modus" if pv_mode else "Export-Modus" }}]{% if use_h2 %}, H2 AUS{% endif %} -
+                {% if pv_mode %}Überschuss: {{ pv_surplus | round(0) }}W{% else %}Export: {{ export_now | round(0) }}W (netto: {{ export_net | round(0) }}W){% endif %},
+                Batterie: {{ battery_now | round(1) }}%, Puffer: {{ temp_now | round(1) }}°C, Ziel: {{ temp_target_now | round(1) }}°C/{{ temp_target }}°C
+
+      # ══ PRIORITÄT 4: Zu wenig Überschuss → verzögert abschalten ══════════════
+      - conditions:
+          - condition: template
+            value_template: "{{ battery_ok and shutdown_needed and any_heater_on }}"
+        sequence:
+          - choose:
+              # Countdown noch nicht gestartet → Flag setzen
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(shutdown_pending, 'off') }}"
+                sequence:
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: "{{ shutdown_pending }}"
+                  - service: logbook.log
+                    data:
+                      name: PV-Heizsteuerung
+                      message: >
+                        Abschalt-Countdown gestartet ({{ delay_time }} min) [{{ "PV-Modus" if pv_mode else "Export-Modus" }}] -
+                        {% if pv_mode %}Überschuss: {{ pv_surplus | round(0) }}W{% else %}Export: {{ export_now | round(0) }}W (netto: {{ export_net | round(0) }}W){% endif %},
+                        Import: {{ import_now | round(0) }}W, Ziel: {{ temp_target_now | round(1) }}°C/{{ temp_target }}°C
+
+              # Countdown läuft und Zeit abgelaufen → abschalten
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ is_state(shutdown_pending, 'on') and
+                         (now() - states[shutdown_pending].last_changed).total_seconds()
+                         >= (delay_time | int * 60) }}
+                sequence:
+                  - choose:
+                      # Beide laufen: erst den größeren abschalten
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ h1_on and h2_on }}"
+                        sequence:
+                          - service: switch.turn_off
+                            target:
+                              entity_id: >
+                                {{ heater_2 if h2_watts >= h1_watts else heater_1 }}
+                          - service: logbook.log
+                            data:
+                              name: PV-Heizsteuerung
+                              message: >
+                                {% if h2_watts >= h1_watts %}H2{% else %}H1{% endif %}
+                                AUS nach {{ delay_time }}min -
+                                Überschuss: {{ pv_surplus | round(0) }}W
+                          # Flag bleibt gesetzt - beim nächsten Lauf ggf. weiteren abschalten
+
+                      # Nur H2 läuft
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ h2_on and not h1_on }}"
+                        sequence:
+                          - service: switch.turn_off
+                            target:
+                              entity_id: "{{ heater_2 }}"
+                          - service: input_boolean.turn_off
+                            target:
+                              entity_id: "{{ shutdown_pending }}"
+                          - service: logbook.log
+                            data:
+                              name: PV-Heizsteuerung
+                              message: >
+                                H2 AUS nach {{ delay_time }}min -
+                                Überschuss: {{ pv_surplus | round(0) }}W
+
+                      # Nur H1 läuft
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ h1_on and not h2_on }}"
+                        sequence:
+                          - service: switch.turn_off
+                            target:
+                              entity_id: "{{ heater_1 }}"
+                          - service: input_boolean.turn_off
+                            target:
+                              entity_id: "{{ shutdown_pending }}"
+                          - service: logbook.log
+                            data:
+                              name: PV-Heizsteuerung
+                              message: >
+                                H1 AUS nach {{ delay_time }}min -
+                                Überschuss: {{ pv_surplus | round(0) }}W
+
+      # ══ PRIORITÄT 5: Situation normalisiert → Countdown abbrechen ═════════════
+      - conditions:
+          - condition: template
+            value_template: "{{ not shutdown_needed and is_state(shutdown_pending, 'on') }}"
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: "{{ shutdown_pending }}"
+          - service: logbook.log
+            data:
+              name: PV-Heizsteuerung
+              message: >
+                Abschalt-Countdown abgebrochen [{{ "PV-Modus" if pv_mode else "Export-Modus" }}] -
+                {% if pv_mode %}Überschuss: {{ pv_surplus | round(0) }}W{% else %}Export: {{ export_now | round(0) }}W (netto: {{ export_net | round(0) }}W){% endif %},
+                Ziel: {{ temp_target_now | round(1) }}°C/{{ temp_target }}°C
+
+      # ══ PRIORITÄT 6: Zirkulationspumpe steuern ══════════════════════════════════
+      # Pumpe an: solange mindestens ein Heizstab läuft
+      # Pumpe Nachlauf: nach Abschalten beider Heizstäbe noch pump_runon Minuten
+      - conditions:
+          - condition: template
+            value_template: "{{ use_pump }}"
+        sequence:
+          - choose:
+
+              # ── Heizstab läuft → Pumpe ein, Nachlauf-Flag löschen ────────────
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ any_heater_on and not is_state(pump_switch, 'on') }}
+                sequence:
+                  - service: switch.turn_on
+                    target:
+                      entity_id: "{{ pump_switch }}"
+                  - service: input_boolean.turn_off
+                    target:
+                      entity_id: "{{ pump_helper }}"
+                  - service: logbook.log
+                    data:
+                      name: PV-Heizsteuerung
+                      message: "Zirkulationspumpe EIN (Heizstab aktiv)"
+
+              # ── Beide Heizstäbe aus → Nachlauf-Countdown starten ─────────────
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ not any_heater_on and is_state(pump_switch, 'on')
+                         and is_state(pump_helper, 'off') }}
+                sequence:
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: "{{ pump_helper }}"
+                  - service: logbook.log
+                    data:
+                      name: PV-Heizsteuerung
+                      message: >
+                        Zirkulationspumpe Nachlauf gestartet ({{ pump_runon }} min)
+
+              # ── Nachlauf läuft → prüfen ob Zeit abgelaufen ───────────────────
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ not any_heater_on
+                         and is_state(pump_helper, 'on')
+                         and (now() - states[pump_helper].last_changed).total_seconds()
+                             >= (pump_runon | int * 60) }}
+                sequence:
+                  - service: switch.turn_off
+                    target:
+                      entity_id: "{{ pump_switch }}"
+                  - service: input_boolean.turn_off
+                    target:
+                      entity_id: "{{ pump_helper }}"
+                  - service: logbook.log
+                    data:
+                      name: PV-Heizsteuerung
+                      message: >
+                        Zirkulationspumpe AUS nach {{ pump_runon }} min Nachlauf
+
+mode: single
+max_exceeded: silent
