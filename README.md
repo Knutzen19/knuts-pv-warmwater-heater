@@ -95,6 +95,11 @@ einen (bzw. zwei mit Pumpe) Umschalter (input_boolean) anlegen:
 
 #### Schritt 2 — Blueprint importieren
 
+!!! LINK FUNKTIONIERT NICHT !!!
+bitte vorerst über den File Editor hochladen in /blueprints/automation/
+
+fix kommt zeitnah
+
 [![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https://github.com/Knutzen19/knuts-pv-warmwater-heater/blob/main/blueprints/automation/pv_heizstab_steuerung.yaml)
 
 Oder manuell: *Einstellungen → Automationen → Blueprints → Blueprint importieren*
