@@ -10,35 +10,35 @@ blueprint:
   input:
     battery_level:
       name: Batterie-Ladestand
-      description: Sensor für den aktuellen Batterieladestand in %. Typische Entitätsnamen: "battery level" (SunGrow), "state_of_charge" (Fronius), "soc" (SMA).
+      description: Sensor für den aktuellen Batterieladestand in %. 
       selector:
         entity:
           domain: sensor
           device_class: battery
     export_power:
       name: Export Leistung
-      description: Sensor für die ins Netz eingespeiste Leistung in Watt (positiv = Export). Typische Entitätsnamen: "Export power" (SunGrow), "grid_feed_in_power" (Fronius), "power_to_grid" (SMA).
+      description: Sensor für die ins Netz eingespeiste Leistung in Watt (positiv = Export). 
       selector:
         entity:
           domain: sensor
           device_class: power
     import_power:
       name: Import Leistung
-      description: Sensor für die aus dem Netz bezogene Leistung in Watt (positiv = Import). Typische Entitätsnamen: "import power" (SunGrow), "grid_consumption_power" (Fronius), "power_from_grid" (SMA).
+      description: Sensor für die aus dem Netz bezogene Leistung in Watt (positiv = Import). 
       selector:
         entity:
           domain: sensor
           device_class: power
     load_power:
       name: Gesamtverbrauch
-      description: Sensor für den aktuellen Hausverbrauch in Watt. Typische Entitätsnamen: "load power" (SunGrow), "consumption_power" (Fronius), "house_consumption" (SMA).
+      description: Sensor für den aktuellen Hausverbrauch in Watt. 
       selector:
         entity:
           domain: sensor
           device_class: power
     total_dc_power:
       name: PV-Ertrag
-      description: Sensor für die gesamte PV-Erzeugung in Watt (DC oder AC). Typische Entitätsnamen: "total dc power" (SunGrow), "pv_power" (Fronius), "pv_generation" (SMA).
+      description: Sensor für die gesamte PV-Erzeugung in Watt (DC oder AC).
       selector:
         entity:
           domain: sensor
